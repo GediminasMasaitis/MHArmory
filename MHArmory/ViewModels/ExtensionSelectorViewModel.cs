@@ -17,6 +17,7 @@ namespace MHArmory.ViewModels
         private static readonly ISolverData[] availableSolverData = new ISolverData[]
         {
             new SolverData(),
+            new IncrementalSolverData(), 
             //new TestSolverData(),
         };
 

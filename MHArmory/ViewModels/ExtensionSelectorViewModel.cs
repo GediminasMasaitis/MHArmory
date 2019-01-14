@@ -9,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MHArmory.Search.Cutoff;
+using MHArmory.Search.OpenCL;
 
 namespace MHArmory.ViewModels
 {
@@ -24,7 +25,8 @@ namespace MHArmory.ViewModels
         private static readonly ISolver[] availableSolvers = new ISolver[]
         {
             new Solver(),
-            CutoffSearch.Instance, 
+            CutoffSearch.Instance,
+            OpenCLSearch.Instance,
             //new TestSolver(),
         };
 

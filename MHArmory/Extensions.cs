@@ -1,5 +1,6 @@
 using System;
 using MHArmory.Search.Default;
+using MHArmory.Search.OpenCL;
 using MHArmory.Search.Testing;
 using MHArmory.Search.Contracts;
 using MHArmory.Search.Contracts.Incremental;
@@ -20,6 +21,7 @@ namespace MHArmory
         {
             new Solver(),
             CutoffSearch.Instance,
+            OpenCLSearch.Instance,
             new TestSolver(),
         };
     }

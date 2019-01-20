@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -12,6 +13,17 @@ namespace MHArmory.Search.MHOSEF
 {
     public class MHOSEFSolver : ISolver
     {
+        private DataConverter converter;
+        private EngineManager engineManager;
+        private ResultParser parser;
+
+        public MHOSEFSolver()
+        {
+            converter = new DataConverter();
+            engineManager = EngineManager.Instance;
+            parser = ResultParser.Instance;
+        }
+
         public string Name { get; } = "MHOSEF";
 
         public string Author { get; } = "Delca";
@@ -22,24 +34,25 @@ namespace MHArmory.Search.MHOSEF
 
         public event Action<double> SearchProgress;
 
+
         public async Task<IList<ArmorSetSearchResult>> SearchArmorSets(ISolverData solverData, CancellationToken cancellationToken)
         {
             SearchProgress?.Invoke(0);
-            IList<ArmorSetSearchResult> results = new List<ArmorSetSearchResult>();
-
-            string mhosefPath = Path.Combine(Directory.GetCurrentDirectory(), "mhosef/js");
+            string mhosefPath = Path.Combine(Directory.GetCurrentDirectory(), "mhosef");
             IList<string> paths = GetJsFilesRecursive(mhosefPath);
 
-            var converter = new DataConverter();
             ConvertedData convertedData = converter.ConvertData(solverData);
 
-            using (IJsEngine engine = EngineManager.Instance.GetEngine())
+            using (IJsEngine engine = engineManager.GetEngine())
             {
                 engine.Execute("window = this;");
 
-                engine.EmbedHostObject("armours", convertedData.Armors);
-                engine.EmbedHostObject("charms", convertedData.Charms);
-                engine.EmbedHostObject("jewels", convertedData.Jewels);
+                engine.EmbedByJson("armours", convertedData.Armors);
+                engine.EmbedByJson("charms", convertedData.Charms);
+                engine.EmbedByJson("jewels", convertedData.Jewels);
+                engine.EmbedByJson("sets", convertedData.Sets);
+                engine.EmbedByJson("skills", convertedData.Skills);
+                engine.EmbedByJson("weapons", new object[0]);
 
                 foreach (string path in paths)
                 {
@@ -51,10 +64,10 @@ namespace MHArmory.Search.MHOSEF
                 int[][] abilityMap = solverData.DesiredAbilities.Where(x => x.Level > 0).Select(x => new int[]{x.Skill.Id, x.Level}).ToArray();
                 string abilityJson = JsonConvert.SerializeObject(abilityMap);
 
-                string result = engine.CallFunction<string>("run", abilityJson);
+                string resultJson = engine.CallFunction<string>("run", abilityJson);
+                IList<ArmorSetSearchResult> results = parser.ParseResults(resultJson, solverData);
+                return results;
             }
-
-            return results;
         }
 
         private IList<string> GetJsFilesRecursive(string path, IList<string> list = null)

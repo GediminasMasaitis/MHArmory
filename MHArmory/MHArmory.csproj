@@ -357,6 +357,10 @@
       <Project>{46E1D053-5670-4B4E-B5DD-B09358B5D36A}</Project>
       <Name>MHArmory.Search.Contracts</Name>
     </ProjectReference>
+    <ProjectReference Include="..\MHArmory.Search.MHOSEF\MHArmory.Search.MHOSEF.csproj">
+      <Project>{a8ab312a-8c85-440a-8bde-51e87baaf669}</Project>
+      <Name>MHArmory.Search.MHOSEF</Name>
+    </ProjectReference>
     <ProjectReference Include="..\MHArmory.Search\MHArmory.Search.csproj">
       <Project>{efc218f1-aae3-499a-a26c-85878b8cec3a}</Project>
       <Name>MHArmory.Search</Name>

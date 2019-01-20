@@ -43,7 +43,7 @@ namespace MHArmory.Search.MHOSEF
             return results;
         }
 
-        private ArmorSetSearchResult ParseResult(string resultStr, Dictionary<int, IArmorPiece> armorPieces, IDictionary<int, ICharm> charms, Dictionary<int, IJewel> jewels)
+        private ArmorSetSearchResult ParseResult(string resultStr, IDictionary<int, IArmorPiece> armorPieces, IDictionary<int, ICharm> charms, IDictionary<int, IJewel> jewels)
         {
             var reader = new StringReader(resultStr);
             var result = new ArmorSetSearchResult();

@@ -3,10 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using MHArmory.Core.DataStructures;
 using MHArmory.Search.Contracts;
+using MHArmory.Search.Cutoff.Models;
+using MHArmory.Search.Cutoff.Models.Mapped;
 
-namespace MHArmory.Search.Cutoff
+namespace MHArmory.Search.Cutoff.Services
 {
-    internal class SearchResultVerifier
+    internal class SearchResultVerifier : ISearchResultVerifier
     {
         public bool TryGetSearchResult(Combination combination, bool hasSuperset, out ArmorSetSearchResult result)
         {
@@ -62,9 +64,18 @@ namespace MHArmory.Search.Cutoff
             }
 
             result.IsMatch = true;
-            result.SpareSlots = totalSlots.Skip(1).ToArray();
-            result.ArmorPieces = combination.Equipments.Take(5).Where(x => x.Equipment != null).Select(x => x.Equipment).Cast<IArmorPiece>().ToList();
-            result.Charm = (ICharmLevel)combination.Equipments[5].Equipment;
+            result.SpareSlots = new int[]{totalSlots[1], totalSlots[2], totalSlots[3]};
+            
+            result.ArmorPieces = new List<IArmorPiece>(CutoffSearchConstants.ArmorTypes);
+            for (int i = 0; i < CutoffSearchConstants.ArmorTypes; i++)
+            {
+                MappedEquipment equipment = combination.Equipments[i];
+                if (equipment.Equipment != null)
+                {
+                    result.ArmorPieces.Add((IArmorPiece)equipment.Equipment);
+                }
+            }
+            result.Charm = (ICharmLevel)combination.Equipments[CutoffSearchConstants.ArmorTypes].Equipment;
             return true;
         }
 
@@ -82,8 +93,22 @@ namespace MHArmory.Search.Cutoff
 
         private bool SkillDebtCutoff(Combination combination, int[] totalSlots)
         {
-            int skillOverload = -combination.RemainingSkills.Where(remainingSkill => remainingSkill < 0).Sum();
-            int debt = combination.Equipments.Sum(x => x.SkillDebt);
+            int skillOverload = 0;
+            for (int i = 0; i < combination.RemainingSkills.Length; i++)
+            {
+                int remainingSkill = combination.RemainingSkills[i];
+                if (remainingSkill < 0)
+                {
+                    skillOverload -= remainingSkill;
+                }
+            }
+            //int debt = combination.TotalDebt;
+            //int debt = combination.Equipments.Sum(x => x.SkillDebt);
+            int debt = 0;
+            for (int i = 0; i < 6; i++)
+            {
+                debt += combination.Equipments[i].SkillDebt;
+            }
             int remainingSlots = 0;
             for (int i = 1; i <= CutoffSearchConstants.Slots; ++i)
             {
@@ -138,21 +163,20 @@ namespace MHArmory.Search.Cutoff
 
         private bool SkillSummingCutoff(Combination combination)
         {
-            int skillSum = 0;
+            int sum = 0;
             foreach (int remainingSkill in combination.RemainingSkills)
             {
                 if (remainingSkill > 0)
                 {
-                    skillSum += remainingSkill;
+                    sum += remainingSkill;
                 }
             }
 
-            int slotSum = 0;
             for (int i = 1; i <= CutoffSearchConstants.Slots; i++)
             {
-                slotSum += combination.Slots[i];
+                sum -= combination.Slots[i];
             }
-            return skillSum <= slotSum;
+            return sum <= 0;
         }
     }
 }

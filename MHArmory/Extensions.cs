@@ -3,7 +3,7 @@ using MHArmory.Search.Default;
 using MHArmory.Search.OpenCL;
 using MHArmory.Search.Testing;
 using MHArmory.Search.Contracts;
-using MHArmory.Search.Contracts.Incremental;
+using MHArmory.Search.Incremental;
 using MHArmory.Search.Cutoff;
 
 namespace MHArmory

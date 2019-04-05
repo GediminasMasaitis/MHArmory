@@ -5,6 +5,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using MHArmory.Core.DataStructures;
 using MHArmory.Search.Contracts;
+using MHArmory.Search.Cutoff.Models;
+using MHArmory.Search.Cutoff.Models.Mapped;
+using MHArmory.Search.Cutoff.Services;
 
 namespace MHArmory.Search.Cutoff
 {
@@ -15,41 +18,45 @@ namespace MHArmory.Search.Cutoff
         public string Description { get; } = "Tree search with cutoffs";
         public int Version { get; } = 1;
 
-        public event Action<double> SearchProgress;
+        public static CutoffSearch Instance { get; } = new CutoffSearch(
+            new MappedCutoffSearchService(new SearchResultVerifier()),
+            new Mapper(),
+            new SupersetMaker()
+         );
 
-        public static CutoffSearch Instance { get; } = new CutoffSearch(new Mapper(), new SupersetMaker(), new SearchResultVerifier());
+        public bool SearchNullPieces { get; set; }
 
-        // I'm not sure how to consume this data. I think some GUI changes will have to be made
-        public event EventHandler<CutoffStatistics> ProgressChanged;
+        private readonly IMappedCutoffSearchService mappedCutoffSearch;
+        private readonly IMapper mapper;
+        private readonly ISupersetMaker supersetMaker;
 
-        private readonly Mapper mapper;
-        private readonly SupersetMaker supersetMaker;
-        private readonly SearchResultVerifier verifier;
-
-        private CutoffStatistics statistics;
-
-        private CutoffSearch(Mapper mapper, SupersetMaker supersetMaker, SearchResultVerifier verifier)
+        public event Action<double> SearchProgress
         {
+            add => mappedCutoffSearch.SearchProgress += value;
+            remove => mappedCutoffSearch.SearchProgress -= value;
+        }
+
+        private CutoffSearch(IMappedCutoffSearchService mappedCutoffSearch, IMapper mapper, ISupersetMaker supersetMaker)
+        {
+            SearchNullPieces = true;
+
+            this.mappedCutoffSearch = mappedCutoffSearch;
             this.mapper = mapper;
             this.supersetMaker = supersetMaker;
-            this.verifier = verifier;
         }
 
-        private void InvokeProgressChanged()
-        {
-            ProgressChanged?.Invoke(this, statistics);
-            SearchProgress?.Invoke(0d);
-        }
-
-        
         public Task<IList<ArmorSetSearchResult>> SearchArmorSets(ISolverData solverData, CancellationToken cancellationToken)
         {
-            statistics = new CutoffStatistics();
-            var heads = solverData.AllHeads.Where(x => x.IsSelected).Select(x => (IArmorPiece)x.Equipment).ToList();
-            var chests = solverData.AllChests.Where(x => x.IsSelected).Select(x => (IArmorPiece)x.Equipment).ToList();
-            var gloves = solverData.AllGloves.Where(x => x.IsSelected).Select(x => (IArmorPiece)x.Equipment).ToList();
-            var waists = solverData.AllWaists.Where(x => x.IsSelected).Select(x => (IArmorPiece)x.Equipment).ToList();
-            var legs = solverData.AllLegs.Where(x => x.IsSelected).Select(x => (IArmorPiece)x.Equipment).ToList();
+            return Task.Run(() => SearchArmorSetsInner(solverData, cancellationToken));
+        }
+
+        public IList<ArmorSetSearchResult> SearchArmorSetsInner(ISolverData solverData, CancellationToken cancellationToken)
+        {
+            var heads = solverData.AllHeads.Where(x => x.IsSelected).Select(x => (IArmorPiece) x.Equipment).ToList();
+            var chests = solverData.AllChests.Where(x => x.IsSelected).Select(x => (IArmorPiece) x.Equipment).ToList();
+            var gloves = solverData.AllGloves.Where(x => x.IsSelected).Select(x => (IArmorPiece) x.Equipment).ToList();
+            var waists = solverData.AllWaists.Where(x => x.IsSelected).Select(x => (IArmorPiece) x.Equipment).ToList();
+            var legs = solverData.AllLegs.Where(x => x.IsSelected).Select(x => (IArmorPiece) x.Equipment).ToList();
             var charms = solverData.AllCharms.Where(x => x.IsSelected).Select(x => x.Equipment).ToList();
 
             IList<IList<IArmorPiece>> allArmorPieces = new List<IList<IArmorPiece>>
@@ -60,45 +67,36 @@ namespace MHArmory.Search.Cutoff
                 waists,
                 legs
             };
-
             IList<IFullArmorSet> fullSets = FilterAndRemoveFullSetEquipment(allArmorPieces);
+            IList<IList<IEquipment>> allEquipment = allArmorPieces.Select(x => (IList<IEquipment>)x.Cast<IEquipment>().ToList()).ToList();
+            allEquipment.Add(charms);
+            MappingResults maps = mapper.MapEverything(allEquipment, solverData.DesiredAbilities, solverData.AllJewels, SearchNullPieces);
 
-            IList<IList<IEquipment>> allEquipment = new List<IList<IEquipment>>(allArmorPieces.Select(x => x.Cast<IEquipment>().ToList()))
-            {
-                charms
-            };
-
-            statistics.Init(allEquipment);
-            
-            MappingResults maps = mapper.MapEverything(allEquipment, solverData.DesiredAbilities, solverData.AllJewels);
-
-            SupersetInfo[] supersets = allEquipment.Select(list => supersetMaker.CreateSupersetModel(list, solverData.DesiredAbilities)).ToArray();
-            MappedEquipment[] supersetMaps = mapper.MapSupersets(supersets, maps);
-
+            int[] mapLengths = maps.Equipment.Select(x => x.Length).ToArray();
+            var statistics = new CutoffStatistics();
+            statistics.Init(mapLengths);
             IList<ArmorSetSearchResult> results = new List<ArmorSetSearchResult>();
 
-            FullSetSearch(fullSets, solverData.WeaponSlots, solverData.DesiredAbilities, charms, solverData.AllJewels, results, cancellationToken);
+            FullSetSearch(statistics, fullSets, solverData.WeaponSlots, solverData.DesiredAbilities, charms, solverData.AllJewels, results, cancellationToken);
 
+            IList<SupersetInfo> supersets = allEquipment
+                .Select(list => supersetMaker.CreateSupersetModel(list, solverData.DesiredAbilities))
+                .ToList();
+            MappedEquipment[] supersetMaps = mapper.MapSupersets(supersets, maps);
             var combination = new Combination(supersetMaps, solverData.WeaponSlots, maps);
-            ParallelizedDepthFirstSearch(combination, 0, maps.Equipment, supersetMaps, results, cancellationToken);
-            //DepthFirstSearch(combination, 0, maps.Equipment, supersetMaps, results, new object(), ct);
-            //statistics.Dump();
-            var resultTask = Task.FromResult(results);
-            return resultTask;
-        }
 
-        private void FullSetSearch(IList<IFullArmorSet> fullSets, int[] weaponSlots, IAbility[] desiredAbilities, IList<IEquipment> charms, IList<SolverDataJewelModel> jewels, IList<ArmorSetSearchResult> results, CancellationToken cancellationToken)
-        {
-            foreach (IFullArmorSet fullSet in fullSets)
+            var parameters = new MappedCutoffSearchParameters
             {
-                var allEquipment = fullSet.ArmorPieces.Select(x => (IList<IEquipment>)new List<IEquipment>() {x}).ToList();
-                allEquipment.Add(charms);
-                MappingResults maps = mapper.MapEverything(allEquipment, desiredAbilities, jewels);
-                SupersetInfo[] supersets = allEquipment.Select(list => supersetMaker.CreateSupersetModel(list, desiredAbilities)).ToArray();
-                MappedEquipment[] supersetMaps = mapper.MapSupersets(supersets, maps);
-                var combination = new Combination(supersetMaps, weaponSlots, maps);
-                DepthFirstSearch(combination, 0, maps.Equipment, supersetMaps, results, new object(), cancellationToken);
-            }
+                Statistics = statistics,
+                Combination = combination,
+                AllEquipment = maps.Equipment,
+                Supersets = supersetMaps,
+                Results = results,
+                Sync = new object()
+            };
+            mappedCutoffSearch.ParallelizedDepthFirstSearch(parameters, 0, cancellationToken);
+            
+            return results;
         }
 
         private IList<IFullArmorSet> FilterAndRemoveFullSetEquipment(IList<IList<IArmorPiece>> allArmorPieces)
@@ -119,61 +117,47 @@ namespace MHArmory.Search.Cutoff
                         nonFullSetPieceList.Add(equipment);
                     }
                 }
+
                 allArmorPieces[i] = nonFullSetPieceList.ToArray();
             }
+
             var fullSetsDictionary = new Dictionary<int, IFullArmorSet>();
             foreach (IArmorPiece fullSetPiece in fullSetPieces)
             {
                 fullSetsDictionary[fullSetPiece.FullArmorSet.Id] = fullSetPiece.FullArmorSet;
             }
+
             return fullSetsDictionary.Values.ToList();
         }
 
-        private void ParallelizedDepthFirstSearch(Combination combination, int depth, MappedEquipment[][] allEquipment, MappedEquipment[] supersets, IList<ArmorSetSearchResult> results, CancellationToken ct)
+        private void FullSetSearch(CutoffStatistics statistics, IList<IFullArmorSet> fullSets, int[] weaponSlots, IAbility[] desiredAbilities,
+            IList<IEquipment> charms, IList<SolverDataJewelModel> jewels, IList<ArmorSetSearchResult> results,
+            CancellationToken cancellationToken)
         {
-            object sync = new object();
-            Parallel.ForEach(allEquipment[depth], equipment =>
+            foreach (IFullArmorSet fullSet in fullSets)
             {
-                var combinationCopy = new Combination(combination);
-                combinationCopy.Replace(depth, equipment);
-                DepthFirstSearch(combinationCopy, depth + 1, allEquipment, supersets, results, sync, ct);
-            });
-        }
+                var allEquipment = fullSet.ArmorPieces
+                    .Select(x => (IList<IEquipment>) new List<IEquipment>() {x})
+                    .ToList();
+                allEquipment.Add(charms);
+                MappingResults maps = mapper.MapEverything(allEquipment, desiredAbilities, jewels, false);
+                SupersetInfo[] supersets = allEquipment
+                    .Select(list => supersetMaker.CreateSupersetModel(list, desiredAbilities))
+                    .ToArray();
+                MappedEquipment[] supersetMaps = mapper.MapSupersets(supersets, maps);
+                var combination = new Combination(supersetMaps, weaponSlots, maps);
 
-        private void DepthFirstSearch(Combination combination, int depth, MappedEquipment[][] allEquipment, MappedEquipment[] supersets, IList<ArmorSetSearchResult> results, object sync, CancellationToken ct)
-        {
-            if (ct.IsCancellationRequested || results.Count >= 100000)
-            {
-                return;
-            }
-            if (depth == allEquipment.Length)
-            {
-                bool match = verifier.TryGetSearchResult(combination, false, out ArmorSetSearchResult result);
-                statistics.RealSearch(match, InvokeProgressChanged);
-                if (match)
+                var parameters = new MappedCutoffSearchParameters
                 {
-                    lock (sync)
-                    {
-                        results.Add(result);
-                    }
-                }
-                return;
+                    Statistics = statistics,
+                    Combination = combination,
+                    AllEquipment = maps.Equipment,
+                    Supersets = supersetMaps,
+                    Results = results,
+                    Sync = new object()
+                };
+                mappedCutoffSearch.DepthFirstSearch(parameters, 0, cancellationToken);
             }
-
-            bool supersetMatch = verifier.TryGetSearchResult(combination, true,  out _);
-            statistics.SupersetSearch(depth, supersetMatch, InvokeProgressChanged);
-            if (!supersetMatch)
-            {
-                return;
-            }
-
-            int depthLength = allEquipment[depth].Length;
-            for (int i = 0; i < depthLength; i++)
-            {
-                combination.Replace(depth, allEquipment[depth][i]);
-                DepthFirstSearch(combination, depth + 1, allEquipment, supersets, results, sync, ct);
-            }
-            combination.Replace(depth, supersets[depth]);
         }
     }
 }
